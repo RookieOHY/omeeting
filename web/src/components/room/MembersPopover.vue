@@ -1,6 +1,6 @@
 <!--
   成员浮层：右上角人数 chip 下拉出来的名单（自己置顶 + 远端成员）。
-  展示 RTT/开麦状态/加入时间；房主可对单个人「闭麦」（服务端上线前是占位提示）。
+  展示 RTT/开麦状态/加入时间；房主可对单个人「闭麦/解除闭麦」（服务端账本 + 双保险静音）。
 -->
 <template>
   <div class="popover" @click.stop>
@@ -16,12 +16,19 @@
         <div class="m-name"><span v-if="m.owner" class="owner-tag">房主</span>{{ m.name }}</div>
         <div class="m-sub">
           {{ joinedText(m.joinedMs) }} ·
-          <span :class="m.speaking ? 'mic-on' : ''">{{ m.speaking ? '开麦中' : '静音' }}</span>
+          <span v-if="m.muted" class="sub-muted">已闭麦</span>
+          <span v-else :class="m.speaking ? 'mic-on' : ''">{{ m.micOn ? '开麦中' : '静音' }}</span>
         </div>
       </div>
-      <button v-if="isOwner && !m.self" class="mute-btn" @click="emit('mute', m.name)">
-        <svg viewBox="0 0 24 24" width="12" height="12"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        闭麦
+      <button
+        v-if="isOwner && !m.self"
+        class="mute-btn"
+        :class="{ revoke: m.muted }"
+        @click="emit('set-mute', m.id, !m.muted)"
+      >
+        <svg v-if="m.muted" viewBox="0 0 24 24" width="12" height="12"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M14 4a5 5 0 0 1 4 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+        <svg v-else viewBox="0 0 24 24" width="12" height="12"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        {{ m.muted ? '解除闭麦' : '闭麦' }}
       </button>
       <div v-else class="m-ping">
         <div class="ms"><span class="pdot" :class="pingDot(m.rtt ?? null)"></span>{{ m.rtt ?? '—' }}{{ m.rtt ? 'ms' : '' }}</div>
@@ -41,7 +48,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'mute', name: string): void
+  (e: 'set-mute', memberId: string, mute: boolean): void
   (e: 'mute-all'): void
 }>()
 
@@ -76,6 +83,7 @@ function joinedText(ms?: number): string {
 .m-name { display: flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 750; }
 .m-sub { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 .m-sub .mic-on { color: var(--blue); font-weight: 600; }
+.m-sub .sub-muted { color: var(--danger); font-weight: 600; }
 .m-ping { text-align: right; flex-shrink: 0; }
 .m-ping .ms { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .pdot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; }
@@ -92,6 +100,8 @@ function joinedText(ms?: number): string {
   display: inline-flex; align-items: center; gap: 5px;
 }
 .mute-btn:hover { border-color: rgba(229, 72, 77, 0.5); color: var(--danger); }
+.mute-btn.revoke { color: var(--danger); border-color: rgba(229, 72, 77, 0.45); }
+.mute-btn.revoke:hover { background: rgba(229, 72, 77, 0.08); }
 .owner-tag {
   font-size: 10px; font-weight: 700; color: var(--blue);
   border: 1px solid rgba(31, 107, 255, 0.4); border-radius: 5px; padding: 1px 5px;

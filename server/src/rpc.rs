@@ -94,14 +94,23 @@ async fn dispatch(ctx: &RpcContext, method: &str, params: &[Value]) -> RpcResult
         }
 
         "subscribe" => {
-            // params: [pid, ctrl] → 新轨时有 offer，否则 null；pid 未知 = 会话已被顶/服务器重启
-            let (pid, _ctrl) = two_strings(params)?;
+            // params: [pid, ctrl, micOn]
+            // 心跳管道：返回 {offer: 有新下行轨时的 offer(否则 null), muted: 该 pid 是否被房主闭麦}；
+            // pid 未知 = 会话已被顶/服务器重启 → 直接报错，客户端走重进流程。
+            // 兼容：不带第 3 参的是旧版前端 → 按老形状回裸 offer/null（旧 tab 在用户刷新前一直可用）
+            let legacy = params.len() < 3;
+            let pid = as_string(&params[0]);
+            let mic_on = !legacy && matches!(as_string(&params[2]).trim(), "true" | "1");
             let (tx, rx) = mpsc::sync_channel(1);
             ctx.cmd_tx
-                .send(Cmd::Subscribe { pid, reply: tx })
+                .send(Cmd::Subscribe { pid, mic_on, reply: tx })
                 .map_err(|e| format!("engine gone: {e}"))?;
-            let offer = spawn_blocking_recv(rx).await?;
-            Ok(json!(offer))
+            let tick = spawn_blocking_recv(rx).await??;
+            if legacy {
+                Ok(json!(tick.offer))
+            } else {
+                Ok(json!({ "offer": tick.offer, "muted": tick.muted }))
+            }
         }
 
         "answer" => {
@@ -172,6 +181,22 @@ async fn dispatch(ctx: &RpcContext, method: &str, params: &[Value]) -> RpcResult
                 .send(Cmd::ChatFetch { room, since, reply: tx })
                 .map_err(|e| format!("engine gone: {e}"))?;
             Ok(spawn_blocking_recv(rx).await?)
+        }
+
+        "muteMember" => {
+            // params: [房主 pid, 目标成员数字 id, 开关("true"/"1" 闭麦，否则解除)]
+            let (pid, target, mute) = three_strings(params)?;
+            let target = target
+                .trim()
+                .parse::<u64>()
+                .map_err(|_| "bad target member id".to_string())?;
+            let mute = matches!(mute.trim(), "true" | "1");
+            let (tx, rx) = mpsc::sync_channel(1);
+            ctx.cmd_tx
+                .send(Cmd::MuteMember { pid, target, mute, reply: tx })
+                .map_err(|e| format!("engine gone: {e}"))?;
+            spawn_blocking_recv(rx).await??;
+            Ok(Value::Null)
         }
 
         other => Err(format!("unknown method: {other}")),

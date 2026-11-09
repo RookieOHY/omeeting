@@ -33,13 +33,21 @@ pub struct NewPeer {
     pub pid: String,
 }
 
+/// 订阅轮询的结果：有新下行轨就带 offer，同时附带「本会话是否被房主闭麦」。
+/// 心跳管道每 ~3s 到一次，闭麦/解除状态就靠它带出（顺路申报自己的开麦状态）。
+pub struct SubTick {
+    pub offer: Option<SdpOffer>,
+    pub muted: bool,
+}
+
 /// HTTP 信令线程 → 引擎线程 的控制命令（见 rpc.rs 的 dispatch）。
 /// 除 Subscribe/Answer/Trickle 这类媒体信令外，roster/chat 也是简单的引擎内查询。
 pub enum Cmd {
-    /// 拉取订阅：有未协商的新下行轨 → 返回 offer；没有 → None；pid 未知（被顶/服务器重启）→ None
+    /// 订阅心跳：顺路申报 micOn，服务端记到 Peer 上；pid 未知（被顶/服务器重启）→ Err
     Subscribe {
         pid: String,
-        reply: std::sync::mpsc::SyncSender<Option<SdpOffer>>,
+        mic_on: bool,
+        reply: std::sync::mpsc::SyncSender<Result<SubTick, String>>,
     },
     /// 回填订阅协商的 answer；peer 不存在或没有 pending offer → false
     Answer {
@@ -69,6 +77,13 @@ pub enum Cmd {
         room: String,
         since: u64,
         reply: std::sync::mpsc::SyncSender<Value>,
+    },
+    /// 房主闭麦/解除某个成员（按目标成员的数字 id）。发起者必须是房主且与目标同房间。
+    MuteMember {
+        pid: String,
+        target: u64,
+        mute: bool,
+        reply: std::sync::mpsc::SyncSender<Result<(), String>>,
     },
 }
 
@@ -124,6 +139,8 @@ struct Peer {
     user: String,
     /// 加入时间（Unix 毫秒），成员浮层的「加入时间」用
     joined_ms: u64,
+    /// 麦克风申报值：客户端每次订阅心跳带上，roster 用它展示「开麦中/静音」
+    mic_on: bool,
     rtc: Rtc,
     /// 订阅侧待应答的 offer（publish 侧协商由 HTTP 线程同步完成后才进引擎，无 pending）
     pending: Option<SdpPendingOffer>,
@@ -142,6 +159,7 @@ impl Peer {
             room: np.room,
             user: np.user,
             joined_ms: unix_millis(),
+            mic_on: false,
             rtc: np.rtc,
             pending: None,
             tracks_in: vec![],
@@ -210,7 +228,9 @@ impl Peer {
                     tracing::info!(room = %self.room, peer = %self.user, mid = ?m.mid, "media added");
                     Propagated::Noop
                 }
-                Event::MediaData(data) => Propagated::MediaData(self.room.clone(), self.id, data),
+                Event::MediaData(data) => {
+                    Propagated::MediaData(self.room.clone(), self.id, self.pid.clone(), data)
+                }
                 _ => Propagated::Noop,
             },
         }
@@ -244,8 +264,8 @@ impl Peer {
 
 /// Peer.poll_output 产生的待处理输出（除 Timeout 外都进待传播队列）
 enum Propagated {
-    /// 一包来自 origin Peer 的解码音频（等待转发给同房间其他人）
-    MediaData(String, PeerId, MediaData),
+    /// 一包来自 origin Peer 的解码音频（pid 用于闭麦校验，等待转发给同房间其他人）
+    MediaData(String, PeerId, String, MediaData),
     /// 该 Peer 下一个定时触发点
     Timeout(Instant),
     Noop,
@@ -315,20 +335,26 @@ fn peer_accept_answer(me: &mut Peer, answer: SdpAnswer) -> bool {
 /// 控制命令处理：所有 Cmd 都在这里落地。媒体转发不经过此函数（主循环直推）。
 fn handle_cmd(rooms: &mut Rooms, peers: &mut [Peer], cmd: Cmd) {
     match cmd {
-        // 订阅：把同房间其他 Peer 的上行轨全部登记进我的下行清单，有新轨才协商 offer
-        Cmd::Subscribe { pid, reply } => {
-            let offer = match peers.iter().position(|p| p.pid == pid) {
+        // 订阅心跳：登记申报值、算闭麦状态、有新轨才协商 offer。
+        // pid 不认识（被顶/服务器重启）→ 报错，客户端会走「会话失效」重进流程
+        Cmd::Subscribe { pid, mic_on, reply } => {
+            let res = match peers.iter().position(|p| p.pid == pid) {
                 Some(idx) => {
                     let room = peers[idx].room.clone();
+                    peers[idx].mic_on = mic_on;
+                    let muted = rooms.is_muted(&room, &pid);
                     let (before, after) = peers.split_at_mut(idx);
                     let (me, rest) = after.split_first_mut().expect("at least self");
                     let others: Vec<&Peer> =
                         before.iter().chain(rest.iter()).filter(|p| p.room == room).collect();
-                    peer_subscribe(me, others)
+                    Ok(SubTick {
+                        offer: peer_subscribe(me, others),
+                        muted,
+                    })
                 }
-                None => None,
+                None => Err("session gone".into()),
             };
-            let _ = reply.send(offer);
+            let _ = reply.send(res);
         }
         Cmd::Answer { pid, answer, reply } => {
             let ok = peers
@@ -358,6 +384,8 @@ fn handle_cmd(rooms: &mut Rooms, peers: &mut [Peer], cmd: Cmd) {
                         "id": p.id.0.to_string(),
                         "name": p.user,
                         "owner": rooms.is_owner(&room, &p.pid),
+                        "micOn": p.mic_on,
+                        "muted": rooms.is_muted(&room, &p.pid),
                         "joinedMs": p.joined_ms,
                     })
                 })
@@ -390,6 +418,34 @@ fn handle_cmd(rooms: &mut Rooms, peers: &mut [Peer], cmd: Cmd) {
             } else {
                 let _ = reply.send(json!(rooms.fetch_chat(&room, since)));
             }
+        }
+
+        Cmd::MuteMember { pid, target, mute, reply } => {
+            // 发起者必须在线（未知 pid 同样算会话失效）
+            let Some(me) = peers.iter().find(|p| p.pid == pid) else {
+                let _ = reply.send(Err("session gone".into()));
+                return;
+            };
+            if !rooms.is_owner(&me.room, &pid) {
+                tracing::warn!(room = %me.room, peer = %me.user, "mute attempt by non-owner");
+                let _ = reply.send(Err("not owner".into()));
+                return;
+            }
+            // 目标必须与发起者在同一房间且在线
+            let Some(target_peer) = peers
+                .iter()
+                .find(|p| p.id.0 == target && p.room == me.room)
+            else {
+                let _ = reply.send(Err("member gone".into()));
+                return;
+            };
+            if target_peer.pid == pid {
+                let _ = reply.send(Err("cannot mute self".into()));
+                return;
+            }
+            rooms.set_muted(&me.room, &target_peer.pid, mute);
+            tracing::info!(room = %me.room, by = %me.user, target = %target_peer.user, mute, "mute member");
+            let _ = reply.send(Ok(()));
         }
     }
 }
@@ -449,9 +505,13 @@ pub fn run(
             }
         }
 
-        // 4. 转发一条待传播音频：同房间、非来源本人
-        if let Some(Propagated::MediaData(room, origin, data)) = to_propagate.pop_front() {
+        // 4. 转发一条待传播音频：同房间、非来源本人、未被房主闭麦
+        if let Some(Propagated::MediaData(room, origin, src_pid, data)) = to_propagate.pop_front() {
             media_pkts += 1;
+            // 服务端静态静音第一保险：被闭麦的人说再多也不出房
+            if rooms.is_muted(&room, &src_pid) {
+                continue;
+            }
             for peer in &mut peers {
                 if peer.room == room && peer.id != origin {
                     peer.handle_media_data_out(origin, &data);

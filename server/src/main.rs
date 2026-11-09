@@ -80,7 +80,7 @@ fn main() {
         tracing::info!(
             http = %cfg.http_addr,
             udp = %cfg.media_addr,
-            "HTTP listening — POST /rpc [turn,publish,subscribe,answer,trickle]"
+            "HTTP listening — POST /rpc [turn,publish,subscribe,answer,trickle,roster,chatSend,chatFetch,muteMember]"
         );
         axum::serve(listener, app).await.expect("axum serve");
     });

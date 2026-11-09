@@ -1,12 +1,13 @@
-//! 房间账本：房主登记 + 聊天/弹幕环形缓冲。
+//! 房间账本：房主登记 + 房主闭麦账本 + 聊天/弹幕环形缓冲。
 //!
-//! 房间没有实体 ——「有人在」才有房间。账本只记两件事：
+//! 房间没有实体 ——「有人在」才有房间。账本只记三件事：
 //! * `owners`：第一个进房的通行证 = 房主（绑 pid 不绑昵称，同名不混淆）；
+//! * `muted`：被房主闭麦的通行证集合（闭的是 pid，改昵称也逃不掉）；
 //! * `chats`：每房间最多 200 条的滚动聊天记录。
 //!
 //! 引擎检测到房间清空时调用 [`Rooms::clear`]，下次进房即新房间的第一轮。
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::{json, Value};
 
@@ -28,6 +29,8 @@ const CHAT_KEEP: usize = 200;
 pub struct Rooms {
     /// 房间名 → 房主通行证
     owners: HashMap<String, String>,
+    /// 房间名 → 被房主闭麦的通行证集合
+    muted: HashMap<String, HashSet<String>>,
     /// 房间名 → 聊天缓冲
     chats: HashMap<String, ChatBuf>,
 }
@@ -43,10 +46,27 @@ impl Rooms {
         self.owners.get(room).map(|o| o == pid).unwrap_or(false)
     }
 
-    /// 房间清空：房主登记 + 聊天记录一并作废，下次进房算新一轮
+    /// 房间清空：房主登记 + 闭麦账本 + 聊天记录一并作废，下次进房算新一轮
     pub fn clear(&mut self, room: &str) {
         self.owners.remove(room);
+        self.muted.remove(room);
         self.chats.remove(room);
+    }
+
+    /// 房主闭麦/解除某个成员（闭的是通行证 pid）。`mute=true` 落账，`false` 出账。
+    pub fn set_muted(&mut self, room: &str, pid: &str, mute: bool) {
+        if !mute {
+            if let Some(set) = self.muted.get_mut(room) {
+                set.remove(pid);
+            }
+            return;
+        }
+        self.muted.entry(room.to_string()).or_default().insert(pid.to_string());
+    }
+
+    /// 该通行证当前是否被房主闭麦
+    pub fn is_muted(&self, room: &str, pid: &str) -> bool {
+        self.muted.get(room).map(|s| s.contains(pid)).unwrap_or(false)
     }
 
     /// 消息入账。`pid` 只是记录进消息体（前端按它判定“是不是我发的”），署名用 `user`。

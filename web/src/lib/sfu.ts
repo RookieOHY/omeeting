@@ -1,11 +1,17 @@
 /**
- * SFU 信令客户端：kraken 兼容的 5 方法 JSON-RPC。
+ * SFU 信令客户端：kraken 兼容的 JSON-RPC。
  *
- * turn      [userId]                              → RTCIceServer[]
- * publish   [room, user, sdpOffer(JSON 字符串)]    → { sdp: SdpAnswer, track: string }
- * subscribe [room, user, ctrlTrackId]              → SdpOffer | null（有新轨时下发 offer）
- * answer    [room, user, ctrlTrackId, sdpAnswer]   → null
- * trickle   [room, user, ctrlTrackId, candidate]   → null
+ * turn       [userId]                              → RTCIceServer[]
+ * publish    [room, user, sdpOffer(JSON 字符串), pid?] → { sdp: SdpAnswer, track, pid }
+ * subscribe  [pid, ctrl, micOn("true"/"false")]    → { offer: SdpOffer|null, muted: 该会话是否被房主闭麦 }
+ * answer     [pid, ctrlTrackId, sdpAnswer]         → null
+ * trickle    [pid, ctrlTrackId, candidate]         → null
+ * roster     [room]                                → [{ id, name, owner, micOn, muted, joinedMs }]
+ * chatSend   [pid, text]                           → { id }
+ * chatFetch  [room, since]                         → [msg...]
+ * muteMember [房主 pid, 目标成员数字 id, "true"/"false"] → null（非房主报 "not owner"）
+ *
+ * subscribe 每 3s 一次，兼做心跳：顺路申报开麦状态、带回闭麦状态。
  *
  * 开麦房专用：纯收听房不 publish（str0m 侧也就没有该 peer）。
  */
@@ -52,6 +58,16 @@ export async function fetchRoster(room: string): Promise<Array<{ id: string; nam
 export async function chatSend(pid: string, text: string): Promise<number> {
   const r = await rpc<{ id: number }>('chatSend', [pid, text])
   return r.id
+}
+
+/** 房主闭麦/解除某个成员（目标按成员面板上的数字 id）。非房主会被服务器拒绝 */
+export async function muteMember(ownerPid: string, memberId: string, mute: boolean): Promise<void> {
+  try {
+    await rpc('muteMember', [ownerPid, memberId, mute ? 'true' : 'false'])
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new Error(msg.replace(/^rpc muteMember: /, ''))
+  }
 }
 
 export interface ChatItem { id: number; user: string; text: string; ts: number; pid?: string }
@@ -112,6 +128,12 @@ export async function startMic(opts: {
   onError?: (err: unknown) => void
   /** getUserMedia 失败时的兜底回调 */
   onFallback?: (reason: string) => void
+  /** 订阅心跳时申报当前是否开麦（房主闭麦语义和成员浮层都用它） */
+  getMicOn?: () => boolean
+  /** 心跳带回「被房主闭麦」（解除自己麦克风）；沿只触发一次 */
+  onOwnerMute?: () => void
+  /** 心跳带回「房主解除闭麦」；沿只触发一次 */
+  onOwnerUnmute?: () => void
 }): Promise<MicHandle> {
   const { room, user, onRemoteTrack, onError } = opts
   trace(`start ${room} ${user}`)
@@ -252,10 +274,21 @@ export async function startMic(opts: {
   // 订阅偶发抖动（网络/服务端瞬时错误）不算致命，静默重试；
   // 连续 ~18s 都失败才判定连线死亡。但「会话已被顶/服务器重启」立刻致命。
   let subFail = 0
+  let ownerMuted = false
   async function pollOnce() {
     if (stopped) return
     try {
-      const offer = await rpc<RTCSessionDescriptionInit | null>('subscribe', [pid, ctrl])
+      const res = await rpc<{ offer: RTCSessionDescriptionInit | null; muted?: boolean }>('subscribe', [
+        pid,
+        ctrl,
+        opts.getMicOn ? String(opts.getMicOn()) : 'false',
+      ])
+      // 闭麦状态沿检测：只在翻转时通知上层（双保险静音的下半场）
+      const em = res.muted ?? false
+      if (em && !ownerMuted) opts.onOwnerMute?.()
+      if (!em && ownerMuted) opts.onOwnerUnmute?.()
+      ownerMuted = em
+      const offer = res.offer
       if (offer && !stopped) {
         await pc.setRemoteDescription(new RTCSessionDescription(offer))
         const answer = await pc.createAnswer()

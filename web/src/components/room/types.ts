@@ -10,4 +10,8 @@ export interface MemberRow {
   /** 我才有真实 RTT；远端暂无数据通道，显示 — */
   rtt?: number | null
   speaking: boolean
+  /** 心跳申报的开麦状态（副行「开麦中/静音」用，弹幕圈照旧用真电平） */
+  micOn?: boolean
+  /** 服务器闭麦账本：当前是否被房主闭麦（此时 micOn 显示无意义） */
+  muted?: boolean
 }

@@ -72,6 +72,7 @@
         :mic-label="session.micLabel.value"
         :mic-busy="session.micBusy.value"
         :mic-airborne="session.micAirborne.value"
+        :owner-muted="session.ownerMuted.value"
         :unread="chat.unread.value"
         :is-owner="session.amIOwner.value"
         :mic-err="session.micErr.value"
@@ -90,7 +91,7 @@
         v-if="membersOpen"
         :members="memberRows"
         :is-owner="session.amIOwner.value"
-        @mute="muteOne"
+        @set-mute="setMute"
         @mute-all="muteAll"
       />
 
@@ -122,7 +123,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import JoinGate from '../components/room/JoinGate.vue'
 import RoomTopbar from '../components/room/RoomTopbar.vue'
@@ -247,6 +248,8 @@ const memberRows = computed<MemberRow[]>(() => {
     joinedMs: joinedAt,
     rtt: session?.ownRtt.value ?? null,
     speaking: session?.micAirborne.value ?? false,
+    micOn: session?.micAirborne.value ?? false,
+    muted: session?.ownerMuted.value ?? false,
   }
   const others: MemberRow[] = (session?.remotes.value ?? []).map((r) => ({
     id: r.id,
@@ -256,6 +259,8 @@ const memberRows = computed<MemberRow[]>(() => {
     joinedMs: session!.remoteJoined(r.id),
     rtt: null,
     speaking: (session!.levelRemote[r.id] ?? 0) > 0.02,
+    micOn: session!.remoteMicOn(r.id),
+    muted: session!.remoteOwnerMuted(r.id),
   }))
   return [me, ...others]
 })
@@ -265,13 +270,29 @@ const closeOnOutside = (e: Event) => {
   if (!(e.target as HTMLElement)?.closest('.chip, .popover')) membersOpen.value = false
 }
 
-/* 闭麦占位：真正让全校听见「闭麦」需要服务端停发该路音频，未实现前如实相告 */
-function muteOne(m: string) {
-  showToast(`「${m}」闭麦需要服务端支持，即将上线`)
+/* 闭麦：服务端muteMember（校验房主身份 + 双保险静音），每人一行地闭 */
+async function setMute(memberId: string, mute: boolean) {
+  if (!session) return
+  const label = memberRows.value.find((m) => m.id === memberId)?.name ?? '该成员'
+  const res = await session.setRemoteMute(memberId, mute)
+  showToast(res === 'ok' ? (mute ? `已闭麦「${label}」` : `已解除「${label}」的闭麦`) : res)
 }
-function muteAll() {
-  showToast('一键闭麦需要服务端支持，即将上线')
+async function muteAll() {
+  if (!session) return
+  const targets = memberRows.value.filter((m) => !m.self && !m.owner && !m.muted)
+  if (targets.length === 0) return
+  const results = await Promise.all(
+    targets.map((m) => session!.setRemoteMute(m.id, true).then((r) => ({ ok: r === 'ok' }))),
+  )
+  const n = results.filter((r) => r.ok).length
+  showToast(n > 0 ? `已闭麦 ${n} 名成员` : '一键闭麦失败')
 }
+
+/* 被闭麦/被解除的即时提醒（心跳带回，≤3s 弹） */
+watch(session.ownerMuted, (m, old) => {
+  if (old === undefined) return
+  showToast(m ? '房主已将你闭麦' : '房主解除了对你的闭麦')
+})
 
 /* ---------- 声音解锁兜底 ---------- */
 function unlockManual() {

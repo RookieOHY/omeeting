@@ -16,11 +16,13 @@
         <span class="lbl">弹幕</span>
       </button>
 
-      <!-- 说话：长按=按住说话，单击=切换持续开麦（判定在会话层的 PTT 状态机里） -->
+      <!-- 说话：长按=按住说话，单击=切换持续开麦（判定在会话层的 PTT 状态机里）；
+           被房主闭麦 = 禁用，图标加划线 |
+      -->
       <button
         class="tb-item primary"
-        :class="{ off: micAirborne }"
-        :disabled="micBusy"
+        :class="{ off: micAirborne, locked: ownerMuted }"
+        :disabled="micBusy || ownerMuted"
         @pointerdown="emit('talk-down')"
         @pointerup="emit('talk-up')"
         @pointerleave="emit('talk-cancel')"
@@ -75,6 +77,8 @@ const props = defineProps<{
   micLabel: string
   micBusy: boolean
   micAirborne: boolean
+  /** 我被房主闭麦中：说话按钮禁用（解除后复活但不自动开麦） */
+  ownerMuted: boolean
   unread: number
   isOwner: boolean
   /** 连接错误提示（浮在工具栏上方） */
@@ -135,7 +139,8 @@ watch(
 .tb-item.primary { color: var(--blue); }
 .tb-item.primary:hover { color: var(--blue); background: rgba(31, 107, 255, 0.08); }
 .tb-item.primary.off { color: var(--danger); }
-.tb-item:disabled { opacity: 0.5; cursor: wait; }
+.tb-item:disabled { opacity: 0.5; cursor: not-allowed; }
+.tb-item.primary.locked { color: var(--danger); opacity: 0.45; }
 .tb-divider { width: 1px; height: 24px; background: var(--border); margin: 0 6px; flex-shrink: 0; }
 .end-btn {
   height: 38px; padding: 0 16px; margin-left: 4px; border: 0; border-radius: 999px;

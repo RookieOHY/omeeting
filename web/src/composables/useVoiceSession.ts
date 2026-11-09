@@ -9,7 +9,7 @@
 import { computed, reactive, ref, type Ref } from 'vue'
 import { createLevelMeter, type LevelMeter } from '../lib/level'
 import { ensureRemoteAudio } from '../lib/audio'
-import { chatFetch, fetchRoster, startMic, type MicHandle } from '../lib/sfu'
+import { chatFetch, fetchRoster, muteMember, startMic, type MicHandle } from '../lib/sfu'
 import { clearPid, loadPid, savePid } from '../lib/session'
 import type { ChatItem } from '../lib/sfu'
 
@@ -31,6 +31,10 @@ export interface RosterUser {
   id: string
   name: string
   owner?: boolean
+  /** 订阅心跳申报的开麦状态（成员浮层「开麦中/静音」用） */
+  micOn?: boolean
+  /** 服务器闭麦账本：该会话当前是否被房主闭麦 */
+  muted?: boolean
   joinedMs?: number
 }
 
@@ -59,8 +63,23 @@ export function useVoiceSession(opts: VoiceSessionOptions) {
   const micErr = ref('')
   /** 通行证失效（服务器重启/在别处重新加入）：UI 提示口径与一般信令失败区分开 */
   const mustRejoin = ref(false)
+  /** 我本人被房主闭麦（解除后按钮复活，但不会自动重新开麦） */
+  const ownerMuted = ref(false)
   /** 远端 audio 被浏览器拦截（用户点解锁消除） */
   const audioBlocked = ref(false)
+  /** 心跳带回被闭麦：立刻切静音轨（不管当前在不在开麦） */
+  function onOwnerMute() {
+    ownerMuted.value = true
+    micLatched.value = false
+    pttHolding.value = false
+    micOn.value = false
+    if (!handle) return
+    void handle.setSource('silent').catch(() => {})
+  }
+  /** 心跳带回解除：只复活按钮，不自动开麦（需要用户自己再按） */
+  function onOwnerUnmute() {
+    ownerMuted.value = false
+  }
   const remotes = ref<RemoteTrack[]>([])
   const levelMe = ref(0)
   const levelRemote = reactive<Record<string, number>>({})
@@ -82,11 +101,19 @@ export function useVoiceSession(opts: VoiceSessionOptions) {
   const pttHolding = ref(false) // 正在长按
   const micAirborne = computed(() => micOn.value || pttHolding.value)
   const micLabel = computed(() =>
-    pttHolding.value ? '松开 结束' : micLatched.value || micOn.value ? '关麦' : '按住说话',
+    ownerMuted.value
+      ? '被房主闭麦'
+      : pttHolding.value
+        ? '松开 结束'
+        : micLatched.value || micOn.value
+          ? '关麦'
+          : '按住说话',
   )
 
   async function engageMic(on: boolean) {
     if (micBusy.value) return
+    // 被房主闭麦期间：开麦请求一律拒收（页面按钮已灰，这里拦空格键/代码路径）
+    if (on && ownerMuted.value) return
     if (on && !voiceOn.value) {
       await startVoice()
       if (!voiceOn.value) return
@@ -113,7 +140,7 @@ export function useVoiceSession(opts: VoiceSessionOptions) {
 
   /** 麦按钮按下：280ms 后进入长按 PTT；提前松开 = 单击切换 */
   function pttDown() {
-    if (micBusy.value) return
+    if (micBusy.value || ownerMuted.value) return
     pressTimer = window.setTimeout(() => {
       pressTimer = undefined
       pttHolding.value = true
@@ -154,6 +181,7 @@ export function useVoiceSession(opts: VoiceSessionOptions) {
     if (tag === 'INPUT' || tag === 'TEXTAREA') return
     e.preventDefault()
     if (!pttHolding.value) {
+      if (ownerMuted.value) return
       pttHolding.value = true
       micLatched.value = false // 空格 PTT 接管
       void engageMic(true)
@@ -188,6 +216,9 @@ export function useVoiceSession(opts: VoiceSessionOptions) {
           savePid(opts.room.value, p)
         },
         initial: INITIAL_SOURCE,
+        getMicOn: () => micAirborne.value,
+        onOwnerMute,
+        onOwnerUnmute,
         onRemoteTrack: (stream) => {
           if (!remotes.value.some((r) => r.id === stream.id)) {
             remotes.value.push({ id: stream.id, stream })
@@ -226,6 +257,7 @@ export function useVoiceSession(opts: VoiceSessionOptions) {
     micOn.value = false
     pttHolding.value = false
     micLatched.value = false
+    ownerMuted.value = false
     remotes.value = []
     clearPid(opts.room.value)
     pid.value = undefined
@@ -299,6 +331,38 @@ export function useVoiceSession(opts: VoiceSessionOptions) {
 
   function remoteJoined(id: string): number | undefined {
     return rosterUsers.value.find((u) => u.id === id)?.joinedMs
+  }
+
+  /** 该成员心跳申报的开麦状态 */
+  function remoteMicOn(id: string): boolean {
+    return rosterUsers.value.find((u) => u.id === id)?.micOn === true
+  }
+
+  /** 该成员当前是否被房主闭麦 */
+  function remoteOwnerMuted(id: string): boolean {
+    return rosterUsers.value.find((u) => u.id === id)?.muted === true
+  }
+
+  /* ---------- 房主闭麦 ---------- */
+  /** 房主发起闭麦/解除（服务端校验身份，双保险：静音 + 心跳带回） */
+  async function setRemoteMute(memberId: string, mute: boolean): Promise<string> {
+    if (!pid.value) return '连接尚未就绪'
+    if (pid.value && !amIOwner.value) return '只有房主可以操作'
+    try {
+      await muteMember(pid.value, memberId, mute)
+      return 'ok'
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (msg.includes('not owner')) return '只有房主可以闭麦'
+      if (msg.includes('member gone')) return '该成员已离开'
+      if (msg.includes('session gone')) {
+        mustRejoin.value = true
+        micErr.value = '连接已失效（服务器重启或在别处加入了），请重新进入'
+        teardown()
+        return '连接已失效'
+      }
+      return `操作失败：${msg}`
+    }
   }
 
   /** 一轮轮询：花名册（顺带清掉已离开的远端电平表）+ 聊天增量 */
@@ -383,7 +447,12 @@ export function useVoiceSession(opts: VoiceSessionOptions) {
     remoteName,
     remoteIsOwner,
     remoteJoined,
+    remoteMicOn,
+    remoteOwnerMuted,
     joinedText,
+    // 房主闭麦
+    ownerMuted,
+    setRemoteMute,
     /** 进房前的一次只读探测（闸门判断「房间是否有人」用，不建立连接） */
     probeRoster: () => fetchRoster(opts.room.value),
     getPid: () => pid.value,
