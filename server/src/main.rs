@@ -1,7 +1,9 @@
 mod config;
 mod engine;
+mod room;
 mod rpc;
 mod static_files;
+mod util;
 
 use std::net::UdpSocket;
 use std::sync::mpsc;
@@ -22,22 +24,34 @@ fn main() {
     // HTTP 线程 ↔ 引擎线程 的通道
     let (new_peer_tx, new_peer_rx) = mpsc::sync_channel::<engine::NewPeer>(64);
     let (cmd_tx, cmd_rx) = mpsc::channel::<engine::Cmd>();
-    // std Receiver 不可 Clone → 包成 Arc<Mutex<>> 供 supervisor 重生时复用
+    // std Receiver 不可 Clone → 包成 Arc<Mutex>，引擎线程 panic 重生后仍持有同一队列
     let new_peer_rx = std::sync::Arc::new(std::sync::Mutex::new(new_peer_rx));
     let cmd_rx = std::sync::Arc::new(std::sync::Mutex::new(cmd_rx));
 
-    // 引擎线程保底重生：线程若意外退出（panic/卸载等），重建 socket 并拉起新引擎。
-    // UDP socket 随线程所有权一起重建——同端口重绑即可（SO_REUSEADDR），客户端流量会重新送达。
+    // 引擎线程保底重生：引擎 panic（str0m 状态异常等）时线程会被打穿，这里 catch
+    // 住 panic、重绑 UDP 端口并在 1s 后拉起新引擎；channel 断连（HTTP 层退出）
+    // 时引擎自己 process::exit，不需要重生。
     {
         let media_addr = cfg.media_addr;
         let public_addr = cfg.public_addr;
         std::thread::Builder::new()
-            .name("sfu-engine-supervisor".into())
+            .name("sfu-engine".into())
             .spawn(move || loop {
                 let socket = UdpSocket::bind(media_addr).expect("bind media udp port");
-                engine::run(socket, public_addr, new_peer_rx.clone(), cmd_rx.clone());
-                tracing::error!("sfu-engine exited unexpectedly, respawning in 1s");
-                std::thread::sleep(std::time::Duration::from_secs(1));
+                let peer_rx = std::sync::Arc::clone(&new_peer_rx);
+                let cmd_rx = std::sync::Arc::clone(&cmd_rx);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    // run() 永不正常返回：要么 panic（下方 catch 住），要么 process::exit
+                    engine::run(socket, public_addr, peer_rx, cmd_rx);
+                }));
+                if result.is_err() {
+                    tracing::error!("sfu-engine panicked, respawning in 1s");
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                } else {
+                    // run() 返回即意味着 exit 已被调用，这里到不了；保险起见也不空转
+                    tracing::error!("sfu-engine exited unexpectedly, stopping");
+                    return;
+                }
             })
             .expect("spawn engine thread");
     }

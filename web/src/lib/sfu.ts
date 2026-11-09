@@ -48,13 +48,13 @@ export async function fetchRoster(room: string): Promise<Array<{ id: string; nam
   return rpc('roster', [room])
 }
 
-/** 聊天/弹幕消息入服务器房间缓冲，返回消息 id */
-export async function chatSend(room: string, user: string, text: string): Promise<number> {
-  const r = await rpc<{ id: number }>('chatSend', [room, user, text])
+/** 聊天/弹幕消息入服务器房间缓冲（按通行证署名），返回消息 id */
+export async function chatSend(pid: string, text: string): Promise<number> {
+  const r = await rpc<{ id: number }>('chatSend', [pid, text])
   return r.id
 }
 
-export interface ChatItem { id: number; user: string; text: string; ts: number }
+export interface ChatItem { id: number; user: string; text: string; ts: number; pid?: string }
 
 /** 增量拉取房间消息（id > since） */
 export async function chatFetch(room: string, since: number): Promise<ChatItem[]> {
@@ -99,6 +99,10 @@ export interface MicHandle {
 export async function startMic(opts: {
   room: string
   user: string
+  /** 通行证：sessionStorage 里上一次会话的 pid（刷新重连用），无则服务器签发 */
+  token?: string
+  /** 服务器签发通行证后回调（存 sessionStorage） */
+  onPid?: (pid: string) => void
   /** 初始发布轨：'silent' = 静音保活（加入即听模式）；'tone' = 测试音；'real' = 真实麦克风 */
   initial?: TrackSource
   /** 兼容旧参数（'tone'|'real' 二选一） */
@@ -128,6 +132,10 @@ export async function startMic(opts: {
   let curSource: TrackSource = 'silent'
   let pollTimer: number | undefined
 
+  // 通行证：publish 前可能还没有（首进房），candidate 先排队，拿到 pid 再补交
+  let pid: string | undefined = opts.token
+  const pendingCands: RTCIceCandidate[] = []
+
   const remoteByUser = new Map<string, MediaStream>()
   let meter: LevelMeter | null = null
 
@@ -137,9 +145,12 @@ export async function startMic(opts: {
   }
 
   pc.onicecandidate = ({ candidate }) => {
-    if (candidate) {
-      rpc('trickle', [room, user, ctrl, JSON.stringify(candidate)]).catch(() => {})
+    if (!candidate) return
+    if (!pid) {
+      pendingCands.push(candidate)
+      return
     }
+    rpc('trickle', [pid, ctrl, JSON.stringify(candidate)]).catch(() => {})
   }
 
   pc.ontrack = ({ streams }) => {
@@ -194,15 +205,22 @@ export async function startMic(opts: {
 
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
-    // 服务端返回 { sdp: {type:'answer', sdp:'v=0...'}, track: userId }
-    const ans = await rpc<{ sdp: RTCSessionDescriptionInit; track: string }>('publish', [
+    // 服务端返回 { sdp: {type:'answer', sdp:'v=0...'}, track: userId, pid: 通行证 }
+    const ans = await rpc<{ sdp: RTCSessionDescriptionInit; track: string; pid: string }>('publish', [
       room,
       user,
       JSON.stringify(pc.localDescription),
+      pid ?? '',
     ])
-    trace('publish ok')
+    pid = ans.pid
+    opts.onPid?.(pid)
+    trace(`publish ok pid=${pid}`)
     await pc.setRemoteDescription(new RTCSessionDescription(ans.sdp))
     trace('remote description ok')
+    // 补交 publish 期间产生的 candidate
+    for (const c of pendingCands.splice(0)) {
+      rpc('trickle', [pid, ctrl, JSON.stringify(c)]).catch(() => {})
+    }
   } catch (err) {
     onError?.(err)
     throw err
@@ -232,20 +250,27 @@ export async function startMic(opts: {
 
   // 订阅循环：3s 一次，有 offer 就协商。
   // 订阅偶发抖动（网络/服务端瞬时错误）不算致命，静默重试；
-  // 连续 ~18s 都失败才判定连线死亡。
+  // 连续 ~18s 都失败才判定连线死亡。但「会话已被顶/服务器重启」立刻致命。
   let subFail = 0
   async function pollOnce() {
     if (stopped) return
     try {
-      const offer = await rpc<RTCSessionDescriptionInit | null>('subscribe', [room, user, ctrl])
+      const offer = await rpc<RTCSessionDescriptionInit | null>('subscribe', [pid, ctrl])
       if (offer && !stopped) {
         await pc.setRemoteDescription(new RTCSessionDescription(offer))
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
-        await rpc('answer', [room, user, ctrl, JSON.stringify(pc.localDescription)])
+        await rpc('answer', [pid, ctrl, JSON.stringify(pc.localDescription)])
       }
       subFail = 0
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.includes('session gone') || msg.includes('peer not found')) {
+        // 通行证失效：服务器已不认识这个会话，静默重试无意义，立刻通知上层重进
+        trace(`session gone: ${msg}`)
+        onError?.(err)
+        return
+      }
       subFail += 1
       if (subFail >= 6) {
         subFail = 0

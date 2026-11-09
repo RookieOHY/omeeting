@@ -14,11 +14,15 @@ use str0m::{Candidate, Rtc};
 
 use crate::config::Config;
 use crate::engine::{Cmd, NewPeer};
+use crate::util::gen_pid;
 
+/// axum State：配置 + 两条通往引擎的通道。
 #[derive(Clone)]
 pub struct RpcContext {
     pub cfg: Config,
+    /// publish 用：承载建好的 Rtc 交给引擎驱动，容量 64 提供背压
     pub new_peer_tx: mpsc::SyncSender<NewPeer>,
+    /// 其余所有命令（subscribe/answer/trickle/roster/chat）
     pub cmd_tx: mpsc::Sender<Cmd>,
 }
 
@@ -30,6 +34,7 @@ pub struct RpcRequest {
     pub params: Vec<Value>,
 }
 
+/// JSON-RPC 入口：分发 + 统一错误包装（异常一律转 `{"error": {...}}`，不让 axum 500）
 pub async fn handle_rpc(
     State(ctx): State<RpcContext>,
     Json(req): Json<RpcRequest>,
@@ -44,6 +49,7 @@ pub async fn handle_rpc(
 
 type RpcResult = Result<Value, String>;
 
+/// 方法分发。params 为位置参数数组（kraken 协议约定），每个分支注明其形状。
 async fn dispatch(ctx: &RpcContext, method: &str, params: &[Value]) -> RpcResult {
     match method {
         "turn" => {
@@ -58,10 +64,17 @@ async fn dispatch(ctx: &RpcContext, method: &str, params: &[Value]) -> RpcResult
         }
 
         "publish" => {
-            // params: [roomId, userId, sdpOffer(JSON 字符串)]
+            // params: [roomId, userId, sdpOffer(JSON 字符串), pid?]
+            // pid = 通行证：首次发布由服务器签发；重连（刷新页面）时客户端带旧 pid
+            // 回来，服务器按 pid 顶号替换 —— 身份与昵称解耦，同名两人可共存。
             let (room, user, offer_str) = three_strings(params)?;
             let offer: SdpOffer = serde_json::from_str(&offer_str)
                 .map_err(|e| format!("bad offer: {e}"))?;
+
+            let pid = match params.get(3).and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                Some(t) => t.to_string(),
+                None => gen_pid(),
+            };
 
             let mut rtc = Rtc::builder().build(Instant::now());
             let candidate = Candidate::host(ctx.cfg.public_addr, "udp")
@@ -74,31 +87,31 @@ async fn dispatch(ctx: &RpcContext, method: &str, params: &[Value]) -> RpcResult
                 .map_err(|e| format!("offer rejected: {e}"))?;
 
             ctx.new_peer_tx
-                .try_send(NewPeer { rtc, room, user })
+                .try_send(NewPeer { rtc, room, user, pid: pid.clone() })
                 .map_err(|e| format!("engine busy: {e}"))?;
 
-            Ok(json!({ "sdp": answer, "track": params[1].as_str().unwrap_or_default() }))
+            Ok(json!({ "sdp": answer, "track": params[1].as_str().unwrap_or_default(), "pid": pid }))
         }
 
         "subscribe" => {
-            // params: [roomId, userId, ctrlTrackId] → 新轨时有 offer，否则 null
-            let (room, user, _ctrl) = three_strings(params)?;
+            // params: [pid, ctrl] → 新轨时有 offer，否则 null；pid 未知 = 会话已被顶/服务器重启
+            let (pid, _ctrl) = two_strings(params)?;
             let (tx, rx) = mpsc::sync_channel(1);
             ctx.cmd_tx
-                .send(Cmd::Subscribe { room, user, reply: tx })
+                .send(Cmd::Subscribe { pid, reply: tx })
                 .map_err(|e| format!("engine gone: {e}"))?;
             let offer = spawn_blocking_recv(rx).await?;
             Ok(json!(offer))
         }
 
         "answer" => {
-            // params: [roomId, userId, ctrlTrackId, sdpAnswer(JSON 字符串)]
-            let (room, user, _ctrl, answer_str) = four_strings(params)?;
+            // params: [pid, ctrlTrackId, sdpAnswer(JSON 字符串)]
+            let (pid, _ctrl, answer_str) = three_strings(params)?;
             let answer: SdpAnswer =
                 serde_json::from_str(&answer_str).map_err(|e| format!("bad answer: {e}"))?;
             let (tx, rx) = mpsc::sync_channel(1);
             ctx.cmd_tx
-                .send(Cmd::Answer { room, user, answer, reply: tx })
+                .send(Cmd::Answer { pid, answer, reply: tx })
                 .map_err(|e| format!("engine gone: {e}"))?;
             let ok = spawn_blocking_recv(rx).await?;
             if ok {
@@ -109,12 +122,12 @@ async fn dispatch(ctx: &RpcContext, method: &str, params: &[Value]) -> RpcResult
         }
 
         "trickle" => {
-            // params: [roomId, userId, ctrlTrackId, candidate(JSON 字符串)]
-            let (room, user, _ctrl, cand_str) = four_strings(params)?;
+            // params: [pid, ctrlTrackId, candidate(JSON 字符串)]
+            let (pid, _ctrl, cand_str) = three_strings(params)?;
             let candidate = parse_candidate(&cand_str)?;
             let (tx, rx) = mpsc::sync_channel(1);
             ctx.cmd_tx
-                .send(Cmd::Trickle { room, user, candidate, reply: tx })
+                .send(Cmd::Trickle { pid, candidate, reply: tx })
                 .map_err(|e| format!("engine gone: {e}"))?;
             let ok = spawn_blocking_recv(rx).await?;
             if ok {
@@ -135,13 +148,13 @@ async fn dispatch(ctx: &RpcContext, method: &str, params: &[Value]) -> RpcResult
         }
 
         "chatSend" => {
-            // params: [roomId, userId, text]
-            let (room, user, text) = three_strings(params)?;
+            // params: [pid, text] —— 署名由服务器按通行证解析，前端传的昵称仅作展示
+            let (pid, text) = two_strings(params)?;
             let (tx, rx) = mpsc::sync_channel(1);
             ctx.cmd_tx
-                .send(Cmd::ChatSend { room, user, text, reply: tx })
+                .send(Cmd::ChatSend { pid, text, reply: tx })
                 .map_err(|e| format!("engine gone: {e}"))?;
-            let id = spawn_blocking_recv(rx).await?;
+            let id = spawn_blocking_recv(rx).await??;
             Ok(json!({ "id": id }))
         }
 
@@ -180,6 +193,7 @@ fn parse_candidate(raw: &str) -> Result<Candidate, String> {
     Candidate::from_sdp_string(&sdp_line).map_err(|e| format!("bad candidate: {e}"))
 }
 
+/// 位置参数助手：把前 N 个参数取成 String（数字/布尔也转字符串），不足 N 个报协议错误。
 fn three_strings(params: &[Value]) -> Result<(String, String, String), String> {
     if params.len() < 3 {
         return Err("expected 3 params".into());
@@ -191,16 +205,11 @@ fn three_strings(params: &[Value]) -> Result<(String, String, String), String> {
     ))
 }
 
-fn four_strings(params: &[Value]) -> Result<(String, String, String, String), String> {
-    if params.len() < 4 {
-        return Err("expected 4 params".into());
+fn two_strings(params: &[Value]) -> Result<(String, String), String> {
+    if params.len() < 2 {
+        return Err("expected 2 params".into());
     }
-    Ok((
-        as_string(&params[0]),
-        as_string(&params[1]),
-        as_string(&params[2]),
-        as_string(&params[3]),
-    ))
+    Ok((as_string(&params[0]), as_string(&params[1])))
 }
 
 fn one_string(params: &[Value]) -> Result<(String,), String> {
@@ -210,6 +219,7 @@ fn one_string(params: &[Value]) -> Result<(String,), String> {
     Ok((as_string(&params[0]),))
 }
 
+/// 字符串取值兜底：非字符串类型序列化成 JSON 文本（room id "222" 可能被客户端数字传参）
 fn as_string(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
