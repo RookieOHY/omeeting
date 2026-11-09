@@ -1,0 +1,38 @@
+# O-Meeting 线上部署：Caddy 自动 HTTPS（Let's Encrypt）+ Rust SFU
+#
+# 前置：
+#   1. 域名 A 记录指向本服务器公网 IP
+#   2. 防火墙/安全组放行：TCP 80、TCP 443、UDP 7071
+#   3. 服务器安装 docker + docker compose plugin
+#
+# 启动：PUBLIC_IP=1.2.3.4 DOMAIN=meet.example.com docker compose up -d --build
+
+services:
+  omeeting:
+    build: .
+    restart: unless-stopped
+    environment:
+      # ICE 候选宣告：必须是本服务器公网 IP
+      PUBLIC_IP: ${PUBLIC_IP:?set PUBLIC_IP to server public ip}
+      RUST_LOG: omeeting_server=info,str0m=info
+    ports:
+      - "7071:7071/udp"   # WebRTC 媒体（SFU 单端口复用）
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - omeeting
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN to your domain}
+    ports:
+      - "80:80"     # ACME http-01 挑战
+      - "443:443"   # HTTPS 入口（页面 + /rpc 信令）
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

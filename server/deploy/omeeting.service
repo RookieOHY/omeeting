@@ -1,0 +1,16 @@
+[Unit]
+Description=O-Meeting SFU (frontend + signaling + WebRTC media)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/omeeting
+ExecStart=/opt/omeeting/omeeting-server
+Environment=PUBLIC_IP=118.195.249.203
+Environment=RUST_LOG=omeeting_server=info,str0m=info
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

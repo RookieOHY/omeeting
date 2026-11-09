@@ -1,0 +1,4 @@
+# Caddy 自动申请并续期 Let's Encrypt 证书
+{$DOMAIN} {
+	reverse_proxy omeeting:7070
+}

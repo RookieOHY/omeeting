@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>O-Meeting 房间页重构 · 草图</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --blue: #1f6bff; --blue-2: #3f8cff;
+    --text: #1c2b45; --text-2: #5a6a85; --text-3: #93a0b8;
+    --border: rgba(23,50,93,.1); --surface: #fff;
+    --danger: #e5484d; --ok: #0ca678;
+  }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: linear-gradient(180deg, #e8f0fb 0%, #f4f7fb 45%);
+    color: var(--text);
+    display: flex; flex-direction: column; min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── 顶部细条（会议信息 + 邀请入口） ── */
+  .topbar { display: flex; align-items: center; gap: 10px; padding: 12px 18px; }
+  .logo { width: 26px; height: 26px; flex-shrink: 0; }
+  .room-title small { color: var(--text-3); font-weight: 500; }
+  .spacer { flex: 1; }
+  .chip {
+    height: 36px; padding: 0 12px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text-2); font-size: 12.5px;
+    display: inline-flex; align-items: center; gap: 6px;
+    cursor: pointer; box-shadow: 0 2px 8px rgba(23,50,93,.06);
+  }
+  .chip b { color: var(--blue); letter-spacing: .06em; }
+  .chip .info-ico {
+    width: 13px; height: 13px; flex-shrink: 0;
+    color: var(--text-3); opacity: .7;
+    margin-left: 3px;
+  }
+  .chip:hover { border-color: var(--border-hover); color: var(--text); }
+  .invite-top {
+    height: 36px; padding: 0 16px; border: 0; border-radius: 999px;
+    background: var(--blue); color: #fff; font-size: 13px; font-weight: 700;
+    cursor: pointer; box-shadow: 0 4px 14px rgba(31,107,255,.3);
+  }
+  /* ── 舞台：成员瓷片格（腾讯会议式） ── */
+  .stage {
+    flex: 1; width: min(980px, 100%); margin: 0 auto;
+    padding: 8px 18px 140px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px; align-content: start;
+  }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 22px; padding: 22px 16px 18px;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    box-shadow: 0 4px 18px rgba(23,50,93,.05);
+  }
+  .avatar {
+    width: 92px; height: 92px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 34px; font-weight: 750;
+    background: linear-gradient(135deg, #3f8cff, #1f6bff);
+  }
+  .avatar.mama { background: linear-gradient(135deg, #12b886, #0ca678); }
+  .tile.speaking .avatar {
+    box-shadow:
+      0 0 0 3px #fff,
+      0 0 0 7px rgba(31, 107, 255, 0.55),
+      0 0 22px 6px rgba(31, 107, 255, 0.3);
+    animation: ring-breath 1.4s ease-in-out infinite;
+  }
+  @keyframes ring-breath {
+    50% { box-shadow: 0 0 0 3px #fff, 0 0 0 5px rgba(31, 107, 255, 0.3), 0 0 10px 2px rgba(31, 107, 255, 0.18); }
+  }
+  .t-name {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    font-size: 15px; font-weight: 750;
+  }
+  .t-status { font-size: 11.5px; color: var(--text-3); }
+  .tile.speaking .t-status { color: var(--blue); font-weight: 600; }
+  .t-status .on { color: var(--ok); }
+  /* ── 底部悬浮控制条（腾讯会议式） ── */
+  .dock {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--border);
+    box-shadow: 0 12px 40px rgba(23,50,93,.16);
+    z-index: 20;
+  }
+  .dock .btn {
+    height: 44px; border-radius: 999px; border: 0; cursor: pointer;
+    font-size: 14px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 18px;
+    background: transparent; color: var(--text-2);
+  }
+  .dock .btn svg { flex-shrink: 0; }
+  .dock .btn:hover { background: var(--surface-strong, #edf2f9); }
+  .dock .btn.primary { background: var(--blue); color: #fff; padding: 0 26px; box-shadow: 0 6px 18px rgba(31,107,255,.35); }
+  .dock .btn.primary.off { background: var(--danger); color: #fff; box-shadow: 0 6px 18px rgba(229,72,77,.35); }
+  .count {
+    height: 44px; padding: 0 16px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #edf2f9; color: var(--text-2); font-size: 13.5px;
+  }
+  .count b { color: var(--text); font-size: 15px; }
+  .spacer2 { flex: 1; }
+
+  /* 右下角按钮组：与浮动栏同一水平线（浮动条内容带 bottom 36px 起） */
+  .end-group {
+    position: fixed; right: 24px; bottom: 36px; z-index: 20;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .leave-btn, .end-btn {
+    height: 44px; padding: 0 20px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 14px; font-weight: 700; cursor: pointer;
+    transition: filter .2s, transform .15s var(--ease-out);
+  }
+  .leave-btn {
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
+    box-shadow: 0 2px 8px rgba(23,50,93,.06);
+  }
+  .leave-btn:hover { color: var(--text); border-color: var(--border-hover); }
+  .end-btn {
+    border: 0; background: var(--danger); color: #fff;
+    box-shadow: 0 8px 24px rgba(229,72,77,.35);
+  }
+  .end-btn:hover { filter: brightness(1.08); }
+  .leave-btn:active, .end-btn:active { transform: scale(.97); }
+
+  /* 按住说话提示 */
+  .dock-hint {
+    position: fixed; bottom: 7px; left: 50%; transform: translateX(-50%);
+    width: max-content; max-width: 92vw;
+    font-size: 11px; color: var(--text-3); text-align: center;
+  }
+  .dock-hint b { color: var(--text-2); }
+
+  /* ── 聊天抽屉（PC 右侧 / 手机底部半屏） ── */
+  .chat-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 45;
+    width: min(340px, 100vw);
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -14px 0 44px rgba(18, 32, 60, 0.12);
+    display: flex; flex-direction: column;
+    transform: translateX(105%);
+    transition: transform 0.32s var(--ease-out);
+  }
+  .chat-panel.open { transform: none; }
+  .chat-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; border-bottom: 1px solid rgba(23, 50, 93, 0.06);
+    font-weight: 750; font-size: 15px;
+  }
+  .chat-head small { color: var(--text-3); font-weight: 500; margin-left: 6px; }
+  .chat-x { border: 0; background: none; font-size: 17px; color: var(--text-3); cursor: pointer; }
+  .chat-body {
+    flex: 1; overflow-y: auto; padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .msg { max-width: 80%; display: flex; gap: 8px; align-items: flex-start; }
+  .msg .mini-av {
+    width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 11px; font-weight: 750;
+    background: linear-gradient(135deg, #12b886, #0ca678);
+  }
+  .msg .bubble {
+    background: #edf2f9; border-radius: 4px 14px 14px 14px;
+    padding: 7px 11px; font-size: 13.5px; line-height: 1.5;
+  }
+  .msg .b-name { font-size: 11px; color: var(--text-3); margin-bottom: 2px; }
+  .msg.mine { align-self: flex-end; flex-direction: row-reverse; }
+  .msg.mine .bubble { background: var(--blue); color: #fff; border-radius: 14px 4px 14px 14px; }
+  .msg.mine .mini-av { background: linear-gradient(135deg, #3f8cff, #1f6bff); }
+  .msg-sys { text-align: center; font-size: 11px; color: var(--text-3); }
+  .chat-input { display: flex; gap: 8px; padding: 12px; border-top: 1px solid rgba(23, 50, 93, 0.06); }
+  .chat-input input {
+    flex: 1; min-width: 0; height: 40px; border-radius: 12px;
+    border: 1px solid var(--border); background: #edf2f9;
+    padding: 0 12px; font-size: 13.5px; color: var(--text); outline: 0;
+  }
+  .chat-input input:focus { border-color: rgba(31, 107, 255, 0.45); background: #fff; }
+  .chat-input button {
+    height: 40px; padding: 0 16px; border-radius: 12px; border: 0;
+    background: var(--blue); color: #fff; font-weight: 700; font-size: 13px; cursor: pointer;
+  }
+  .fab-badge {
+    position: absolute; top: -5px; right: -5px;
+    min-width: 17px; height: 17px; padding: 0 4px;
+    border-radius: 999px; background: var(--danger); color: #fff;
+    font-size: 10px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .dock .btn { position: relative; }
+
+  /* ── 邀请弹层（点「邀请」出现） ── */
+  .sheet-backdrop {
+    position: fixed; inset: 0; background: rgba(18,32,60,.4);
+    display: none; align-items: center; justify-content: center; z-index: 30;
+  }
+  .sheet-backdrop.open { display: flex; }
+  .sheet {
+    width: min(420px, calc(100vw - 32px));
+    background: var(--surface); border-radius: 24px; padding: 24px;
+    box-shadow: 0 24px 70px rgba(18,32,60,.3);
+  }
+  .sheet h3 { font-size: 17px; margin-bottom: 4px; }
+  .sheet .sub { font-size: 12.5px; color: var(--text-3); margin-bottom: 16px; }
+  .code-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .code { font-size: 28px; font-weight: 800; letter-spacing: .12em; color: var(--blue); }
+  .mini {
+    height: 32px; padding: 0 12px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text-2); font-size: 12px; cursor: pointer;
+  }
+  .link-row {
+    display: flex; align-items: center; gap: 8px;
+    background: #edf2f9; border-radius: 12px; padding: 11px 12px;
+    font-size: 12.5px; color: var(--text-2); margin-bottom: 16px;
+    white-space: nowrap; overflow: hidden;
+  }
+  .link-row span { overflow: hidden; text-overflow: ellipsis; }
+  .sheet .go {
+    width: 100%; height: 46px; border: 0; border-radius: 999px;
+    background: var(--blue); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer;
+  }
+  .sheet .x { float: right; border: 0; background: none; font-size: 18px; color: var(--text-3); cursor: pointer; }
+
+  /* ── 成员小浮层：从右上角下拉的紧凑卡片 ── */
+  .popover {
+    position: fixed; top: 62px; right: 16px; z-index: 40;
+    width: 300px; padding: 6px 10px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; box-shadow: 0 16px 48px rgba(18,32,60,.18);
+    display: none;
+  }
+  .popover.open { display: block; }
+  .p-title {
+    padding: 8px 6px 6px; font-size: 13px; font-weight: 750;
+    border-bottom: 1px solid rgba(23,50,93,.06);
+  }
+  .p-title small { color: var(--text-3); font-weight: 500; margin-left: 6px; }
+  .m-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 4px;
+  }
+  .m-avatar {
+    width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 13px; font-weight: 750;
+    background: linear-gradient(135deg, #3f8cff, #1f6bff);
+  }
+  .m-avatar.mama { background: linear-gradient(135deg, #12b886, #0ca678); }
+  .m-main { flex: 1; min-width: 0; }
+  .m-name {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 13.5px; font-weight: 750;
+  }
+  .owner-tag {
+    font-size: 10px; font-weight: 700; color: var(--blue);
+    border: 1px solid rgba(31,107,255,.4); border-radius: 5px; padding: 1px 5px;
+  }
+  .m-sub { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+  .m-sub .mic-on { color: var(--blue); font-weight: 600; }
+  .m-ping { text-align: right; flex-shrink: 0; }
+  .m-ping .ms { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pdot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; }
+  .pdot.g { background: var(--ok); }
+  .pdot.o { background: #f5a623; }
+  .pdot.r { background: var(--danger); }
+
+  /* 房主管控：一键闭麦 + 单人闭麦 */
+  .p-head { display: flex; align-items: center; justify-content: space-between; }
+  .mute-all {
+    border: 0; background: none; cursor: pointer;
+    font-size: 12px; font-weight: 700; color: var(--danger);
+    padding: 4px 8px; border-radius: 8px;
+  }
+  .mute-all:hover { background: rgba(229,72,77,.08); }
+  .mute-all:disabled { color: var(--text-3); cursor: default; background: none; }
+  .mute-btn {
+    flex-shrink: 0; height: 28px; padding: 0 10px;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface); color: var(--text-2);
+    font-size: 11.5px; font-weight: 700; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .mute-btn:hover { border-color: rgba(229,72,77,.5); color: var(--danger); }
+  .mute-btn.undo { color: var(--blue); border-color: rgba(31,107,255,.35); }
+  .mute-btn.undo:hover { border-color: rgba(31,107,255,.6); color: var(--blue); }
+  .muted-hint { color: var(--danger) !important; font-weight: 600; }
+
+  @media (max-width: 640px) {
+    .stage { grid-template-columns: repeat(2, 1fr); padding-bottom: 120px; }
+    .dock { left: 50%; transform: translateX(-50%); }
+    .end-group { right: 14px; bottom: 36px; }
+    .leave-btn, .end-btn { padding: 0 14px; }
+    .popover { right: 10px; left: 10px; width: auto; }
+    .chip.hide-m { display: none; }
+    .chat-panel {
+      top: auto; left: 0; right: 0; height: 62%;
+      width: auto; border-radius: 20px 20px 0 0;
+      border: 1px solid var(--border); border-bottom: 0;
+      transform: translateY(108%);
+    }
+    .chat-panel.open { transform: none; }
+  }
+</style>
+</head>
+<body>
+<!-- ── 顶部：返回 · 房间名 · 加入码 · 计时 · 邀请 ── -->
+<div class="topbar">
+  <svg class="logo" viewBox="0 0 48 48" fill="none">
+    <defs>
+      <linearGradient id="om-grad" x1="8" y1="4" x2="40" y2="44" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#3AD2B5" /><stop offset="0.55" stop-color="#5B8CFF" /><stop offset="1" stop-color="#8F6BFF" />
+      </linearGradient>
+    </defs>
+    <rect x="22.4" y="0" width="3.2" height="12" rx="1.6" fill="url(#om-grad)" transform="rotate(0 24 24)" />
+    <rect x="22.4" y="6" width="3.2" height="6" rx="1.6" fill="url(#om-grad)" transform="rotate(45 24 24)" />
+    <rect x="22.4" y="4" width="3.2" height="10" rx="1.6" fill="url(#om-grad)" transform="rotate(90 24 24)" />
+    <rect x="22.4" y="7" width="3.2" height="7" rx="1.6" fill="url(#om-grad)" transform="rotate(135 24 24)" />
+    <rect x="22.4" y="0" width="3.2" height="12" rx="1.6" fill="url(#om-grad)" transform="rotate(180 24 24)" />
+    <rect x="22.4" y="6" width="3.2" height="6" rx="1.6" fill="url(#om-grad)" transform="rotate(225 24 24)" />
+    <rect x="22.4" y="4" width="3.2" height="10" rx="1.6" fill="url(#om-grad)" transform="rotate(270 24 24)" />
+    <rect x="22.4" y="7" width="3.2" height="7" rx="1.6" fill="url(#om-grad)" transform="rotate(315 24 24)" />
+    <circle cx="24" cy="24" r="3" fill="url(#om-grad)" opacity="0.85" />
+  </svg>
+  <div class="room-title">12</div>
+  <div class="spacer"></div>
+  <button class="chip" onclick="toggleMembers(event)">
+    <svg viewBox="0 0 24 24" width="15" height="15"><circle cx="9" cy="8" r="3.2" fill="currentColor"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><circle cx="16.5" cy="9" r="2.6" fill="currentColor" opacity=".55"/><path d="M16.5 14.5c2.3.3 3.8 1.9 4.3 4.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" opacity=".55"/></svg>
+    <b>2</b> 人 <svg class="info-ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.8" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="4.9" r="1" fill="currentColor"/><rect x="7.3" y="7" width="1.4" height="4.8" rx="0.7" fill="currentColor"/></svg>
+  </button>
+  <div class="chip hide-m">00:42</div>
+  <button class="invite-top" onclick="openSheet()">＋ 邀请</button>
+</div>
+
+<!-- ── 舞台：每个成员一块瓷片 ── -->
+<div class="stage">
+  <!-- 我：开麦说话中（点头像里的按钮可切换演示） -->
+  <div class="tile" id="me">
+    <div class="avatar">你</div>
+    <div class="t-name"><span class="owner-tag">房主</span>你</div>
+    <div class="t-status" id="meStatus">开麦中</div>
+  </div>
+
+  <!-- 对方：静音只听 -->
+  <div class="tile">
+    <div class="avatar mama">妈</div>
+    <div class="t-name">妈妈</div>
+    <div class="t-status">静音</div>
+  </div>
+</div>
+
+<!-- ── 底部控制条：麦克风（按住说话）+ 聊天 ── -->
+<div class="dock">
+  <button class="btn primary" id="micBtn">
+    <svg id="icoTalk" viewBox="0 0 24 24" width="15" height="15"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+    <svg id="icoAir" viewBox="0 0 24 24" width="15" height="15" style="display:none"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <span id="micLabel">按住说话</span>
+  </button>
+  <button class="btn" id="chatBtn" onclick="toggleChat()">
+    <svg viewBox="0 0 24 24" width="15" height="15"><path d="M12 4.2c-4.2 0-7.6 2.8-7.6 6.3 0 2 1.1 3.8 2.9 5l-.6 3 3.3-1.7c.65.13 1.32.2 2 .2 4.2 0 7.6-2.8 7.6-6.5S16.2 4.2 12 4.2z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/></svg>
+    聊天
+    <span class="fab-badge" id="chatBadge">1</span>
+  </button>
+</div>
+<p class="dock-hint">长按按钮或按住 <b>空格键</b> 说话，松开自动闭麦 · 单击 = 持续开麦</p>
+
+<!-- ── 聊天抽屉（PC 右侧滑出 / 手机底部半屏） ── -->
+<aside class="chat-panel" id="chatPanel">
+  <div class="chat-head">会议聊天<small id="chatCount">2 人</small><button class="chat-x" onclick="toggleChat()">✕</button></div>
+  <div class="chat-body" id="chatBody">
+    <div class="msg-sys">妈妈 加入了房间</div>
+    <div class="msg">
+      <div class="mini-av">妈</div>
+      <div><div class="bubble"><div class="b-name">妈妈</div>吃饭了吗</div></div>
+    </div>
+    <div class="msg mine">
+      <div class="mini-av">你</div>
+      <div><div class="bubble">马上好，等我两分钟</div></div>
+    </div>
+  </div>
+  <div class="chat-input">
+    <input id="chatText" type="text" placeholder="发消息…" maxlength="200" @keydown.enter="chatSend()" onkeydown="if(event.key==='Enter')chatSend()" />
+    <button onclick="chatSend()">发送</button>
+  </div>
+</aside>
+
+<!-- ── 右下角：离开房间（所有人）+ 结束房间（仅房主显示） ── -->
+<div class="end-group">
+  <button class="leave-btn">
+    <svg viewBox="0 0 24 24" width="15" height="15"><path d="M15 4h3.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H15M10 8l-4 4 4 4M6 12h10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    离开房间
+  </button>
+  <button class="end-btn">
+    <svg viewBox="0 0 24 24" width="15" height="15"><path d="M12 3v8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg>
+    结束房间
+  </button>
+</div>
+
+<!-- ── 邀请弹层 ── -->
+<div class="sheet-backdrop" id="sheet" onclick="if(event.target===this)closeSheet()">
+  <div class="sheet">
+    <button class="x" onclick="closeSheet()">✕</button>
+    <h3>邀请加入「12」</h3>
+    <div class="sub">微信里发链接直接进；电话里对口头码</div>
+    <div class="code-row">
+      <span class="code">FW2-VQ5</span>
+      <button class="mini">复制码</button>
+    </div>
+    <div class="link-row"><span>omeeting.duckdns.org:8443/12?c=FW2-VQ5</span></div>
+    <button class="go">复制邀请语，发到群里</button>
+  </div>
+</div>
+
+  <!-- ── 成员小浮层：从右上角 ⓘ 下拉（腾讯会议房间信息式） ── -->
+  <div class="popover" id="members">
+    <div class="p-head">
+      <div class="p-title">成员 <small>2 人在线</small></div>
+      <button class="mute-all" id="muteAllBtn" onclick="muteAll()">一键闭麦</button>
+    </div>
+    <div class="m-row">
+      <div class="m-avatar">你</div>
+      <div class="m-main">
+        <div class="m-name"><span class="owner-tag">房主</span>你</div>
+        <div class="m-sub">2026-11-09 14:32 加入 · <span class="mic-on" id="meMic">开麦中</span></div>
+      </div>
+      <div class="m-ping">
+        <div class="ms"><span class="pdot g"></span>23ms</div>
+      </div>
+    </div>
+    <div class="m-row">
+      <div class="m-avatar mama">妈</div>
+      <div class="m-main">
+        <div class="m-name">妈妈</div>
+        <div class="m-sub" id="mamaSub">2026-11-08 20:15 加入 · 静音</div>
+      </div>
+      <button class="mute-btn" id="mamaMuteBtn" onclick="muteOne()">
+        <svg viewBox="0 0 24 24" width="12" height="12"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span id="mamaMuteLabel">闭麦</span>
+      </button>
+    </div>
+  </div>
+
+<script>
+  /* ── 按住说话（微信式）：长按=临时说话松开自动闭麦；单击=持续开麦；空格=PC 长按 ── */
+  let latched = false   // 单击切换的持续开麦
+  let holding = false   // 正在长按（按钮或空格）
+  let holdTimer = null
+
+  function renderMic() {
+    const on = latched || holding
+    document.getElementById('me').classList.toggle('speaking', on)
+    document.getElementById('micBtn').classList.toggle('off', on)
+    document.getElementById('icoTalk').style.display = on ? 'none' : 'block'
+    document.getElementById('icoAir').style.display = on ? 'block' : 'none'
+    document.getElementById('meStatus').textContent = on ? '开麦中' : '静音'
+    document.getElementById('micLabel').textContent =
+      holding ? '松开 结束' : (latched ? '关麦' : '按住说话')
+  }
+
+  const micBtn = document.getElementById('micBtn')
+  micBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    holding = false
+    holdTimer = setTimeout(() => { holding = true; renderMic() }, 280) // 超过 280ms 视为长按
+  })
+  function endPress() {
+    if (!holdTimer) return
+    clearTimeout(holdTimer); holdTimer = null
+    if (holding) { holding = false; renderMic() }  // 松开 → 自动闭麦
+    else { latched = !latched; renderMic() }       // 短按 → 切换持续开麦
+  }
+  micBtn.addEventListener('pointerup', endPress)
+  micBtn.addEventListener('pointerleave', endPress)
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' || e.repeat) return
+    const tag = document.activeElement?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return
+    e.preventDefault()
+    holding = true; renderMic()
+  })
+  window.addEventListener('keyup', (e) => {
+    if (e.code !== 'Space') return
+    holding = false; renderMic()
+  })
+
+  function openSheet() { document.getElementById('sheet').classList.add('open') }
+  function closeSheet() { document.getElementById('sheet').classList.remove('open') }
+  function toggleMembers(e) {
+    e.stopPropagation()
+    document.getElementById('members').classList.toggle('open')
+  }
+  document.addEventListener('click', (e) => {
+    const p = document.getElementById('members')
+    if (p.classList.contains('open') && !p.contains(e.target)) p.classList.remove('open')
+  })
+  /* 房主管控演示：单人闭麦 / 一键闭麦（真实现=服务器停发该成员音频下行） */
+  let mamaMuted = false
+  function renderMama() {
+    const sub = document.getElementById('mamaSub')
+    const btn = document.getElementById('mamaMuteBtn')
+    const lbl = document.getElementById('mamaMuteLabel')
+    sub.innerHTML = '2026-11-08 20:15 加入 · ' + (mamaMuted ? '<span class="muted-hint">已被房主闭麦</span>' : '静音')
+    btn.classList.toggle('undo', mamaMuted)
+    lbl.textContent = mamaMuted ? '解除闭麦' : '闭麦'
+    document.getElementById('muteAllBtn').textContent = mamaMuted ? '解除全部闭麦' : '一键闭麦'
+  }
+  function muteOne() { mamaMuted = !mamaMuted; renderMama() }
+  function muteAll() { mamaMuted = !mamaMuted; renderMama() }
+
+  /* ── 聊天抽屉演示 ── */
+  function toggleChat() {
+    document.getElementById('chatPanel').classList.toggle('open')
+    const badge = document.getElementById('chatBadge')
+    if (badge) badge.remove()
+  }
+  function chatSend() {
+    const input = document.getElementById('chatText')
+    const text = input.value.trim()
+    if (!text) return
+    const body = document.getElementById('chatBody')
+    const div = document.createElement('div')
+    div.className = 'msg mine'
+    div.innerHTML = '<div class="mini-av">你</div><div><div class="bubble"></div></div>'
+    div.querySelector('.bubble').textContent = text
+    body.appendChild(div)
+    body.scrollTop = body.scrollHeight
+    input.value = ''
+  }
+</script>
+</body>
+</html>

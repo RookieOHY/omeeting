@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>O-Meeting · 首页草图 v3</title>
+<style>
+  :root {
+    --line: #b9bec7;
+    --line-soft: #d8dce2;
+    --fill: #eef0f3;
+    --fill-2: #e2e5ea;
+    --note: #e5484d;
+    --ink: #52565e;
+    --ink-2: #8a8f98;
+    --brand: #6e56cf;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #f4f5f7;
+    color: var(--ink);
+    font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    padding: 40px 32px 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 48px;
+  }
+  h1 { font-size: 15px; letter-spacing: .06em; color: var(--ink-2); font-weight: 700; }
+  .artboards { display: flex; gap: 40px; flex-wrap: wrap; justify-content: center; align-items: flex-start; }
+
+  .board { background:#fff; border:2px solid var(--line); border-radius:14px; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,.06); }
+  .pc { width: 760px; }
+  .mobile { width: 340px; }
+  .board-title { display:flex; justify-content:space-between; align-items:center; padding:10px 16px; border-bottom:2px solid var(--line-soft); font-size:12px; color:var(--ink-2); font-weight:700; letter-spacing:.04em;}
+  .board-title b { color: var(--ink); }
+
+  .wx { position: relative; }
+  .label {
+    position:absolute; font-size:10.5px; color:var(--note); font-weight:600; line-height:1.35;
+    border:1.5px dashed var(--note); border-radius:6px; padding:2px 7px; background:#fff;
+  }
+  .label.left { right: -14px; transform: translateX(100%); top: 50%; margin-top: -12px; white-space: nowrap;}
+  .label.top { left: 50%; top: -12px; transform: translateX(-50%); white-space: nowrap;}
+  .label.inner { margin: 6px 0 0 10px; display:inline-block; }
+
+  .bar { height: 34px; border-bottom: 2px solid var(--line-soft); display:flex; align-items:center; justify-content:space-between; padding:0 16px; background: var(--fill);}
+  .chip { height:20px; border-radius:10px; background: var(--fill-2); border:1.5px solid var(--line); display:inline-block;}
+  .row { display:flex; align-items:center; gap:10px; }
+  .dot { width:8px;height:8px;border-radius:50%;background:var(--brand);display:inline-block;}
+
+  .sec { padding: 22px 24px; }
+  .sec + .sec { border-top: 2px solid var(--line-soft); }
+
+  .h-block { border-radius:8px; background:var(--fill-2); border:1.5px solid var(--line);}
+  .h-xl { height:34px; width:82%;}
+  .h-lg { height:30px; width:64%;}
+  .p { height:12px; border-radius:6px; background:var(--fill-2); border:1.5px solid var(--line-soft);}
+  .stack-6 > * + * { margin-top: 6px; }
+  .stack-10 > * + * { margin-top: 10px; }
+
+  /* composer */
+  .composer { display:flex; align-items:center; gap:8px; border:2.5px solid var(--line); border-radius:999px; padding:8px 8px 8px 18px; background:var(--fill); position:relative;}
+  .composer .pill { flex:1; text-align:center; font-size:12px; color:var(--ink-2); padding:9px 0; }
+  .btn-a { padding:10px 16px; border-radius:999px; background:var(--brand); color:#fff; font-size:12px; font-weight:700;}
+  .dice { width:38px;height:38px;border-radius:50%;border:2px dashed var(--line); display:flex;align-items:center;justify-content:center;font-size:14px;}
+
+  /* marquee */
+  .marquee { border-block:2px solid var(--line-soft); padding:10px 0; overflow:hidden; background:#fafbfc;}
+  .mtrack { display:flex; gap:18px; width:max-content; font-size:11px; color:var(--ink-2); white-space:nowrap; letter-spacing:.05em;}
+  .mtrack i { width:5px;height:5px;border-radius:50%;background:var(--brand); opacity:.6;}
+
+  /* stats */
+  .stats { display:flex; }
+  .stat { flex:1; padding: 8px 14px; }
+  .stat + .stat { border-left: 2px solid var(--line-soft); }
+  .stat .n { font-size:18px; font-weight:800; color:var(--brand);}
+  .stat .t { font-size:10px; color:var(--ink-2); margin-top:2px;}
+
+  /* bento */
+  .bento { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;}
+  .bcard { border:2px solid var(--line-soft); border-radius:12px; padding:12px; background:#fafbfc; position:relative;}
+  .bcard .ic { width:26px;height:26px;border-radius:8px;background:var(--fill-2);border:1.5px solid var(--line);}
+  .bcard .t { height:10px; width:70%; margin-top:8px;}
+  .bcard .d { height:8px; margin-top:5px; }
+  .bcard .viz { height:26px; margin-top:10px; border-radius:8px; background:var(--fill);}
+
+  /* recents */
+  .rlist { display:flex; flex-direction:column; gap:8px;}
+  .ritem { display:flex; align-items:center; gap:10px; border:2px solid var(--line-soft); border-radius:12px; padding:9px 12px; background:#fafbfc;}
+  .avatar { width:30px;height:30px;border-radius:9px;background:var(--fill-2);border:1.5px solid var(--line);}
+  .ritem .grow { flex:1; }
+  .act { display:flex; gap:6px;}
+  .act i { width:26px;height:26px;border-radius:8px;border:1.5px solid var(--line); background:#fff; display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink-2);}
+
+  .foot { padding:14px 24px; border-top:2px solid var(--line-soft); display:flex; justify-content:center; gap:8px; font-size:10.5px; color:var(--ink-2);}
+
+  /* room page */
+  .grid6 { display:grid; grid-template-columns:repeat(4,1fr); gap:10px;}
+  .pcard { border:2px solid var(--line-soft); border-radius:14px; padding:10px; background:#fafbfc; position:relative;}
+  .pcard.big { border-color: var(--note); }
+  .pcard .av { width:34px;height:34px;border-radius:10px;background:var(--fill-2);border:1.5px solid var(--line);}
+  .pcard .nm { height:8px; width:60%; margin-top:8px;}
+  .pcard .wv { height:20px; margin-top:8px; border-radius:6px; background: repeating-linear-gradient(90deg, var(--fill-2) 0 3px, transparent 3px 7px); border:1.5px solid var(--line-soft);}
+  .fab { position:absolute; right:16px; bottom:14px; width:44px; height:44px; border-radius:50%; background:var(--fill-2); border:2px solid var(--line); display:flex;align-items:center;justify-content:center;font-size:15px;}
+  .dialog { position:absolute; left:50%; top:40%; transform:translate(-50%,-50%); width:70%; background:#fff; border:2.5px solid var(--line); border-radius:16px; padding:16px; box-shadow:0 14px 40px rgba(0,0,0,.12);}
+  .dialog .in { height:32px; border:2px solid var(--line-soft); border-radius:999px; margin:10px 0; display:flex; align-items:center; padding:0 12px; font-size:11px; color:var(--ink-2); gap:6px;}
+</style>
+</head>
+<body>
+
+  <h1>O-MEETING · 首页 & 房间页 · 低保真草图 v3（参考 Landdding / Wedoflow 语言）</h1>
+
+  <div class="artboards">
+    <!-- ============ PC 首页 ============ -->
+    <div class="board pc">
+      <div class="board-title"><b>B1 · 首页 / PC</b><span>760 × 自动</span></div>
+      <div class="wx">
+        <!-- 顶栏 -->
+        <div class="bar">
+          <div class="row">
+            <span class="chip" style="width:26px"></span><b style="font-size:12px">O-Meeting</b>
+            <span class="chip" style="width:34px; height:16px"></span>
+          </div>
+          <div class="row" style="font-size:11px;color:var(--ink-2)"><span class="dot"></span>语音引擎在线</div>
+        </div>
+
+        <div class="sec">
+          <span class="label inner">① 眉题 kicker ✦</span><br/>
+          <div class="stack-6" style="margin-top:6px">
+            <span class="chip" style="height:16px;width:180px"></span>
+          </div>
+
+          <span class="label inner">② 大标题：白 + 渐变第二行；「链接」衬线斜体</span><br/>
+          <div class="stack-6" style="margin-top:26px">
+            <div class="h-block h-xl"></div>
+            <div class="h-block h-lg" style="background:linear-gradient(90deg,#c9befa,#b8cdf6);"></div>
+          </div>
+
+          <div class="stack-6" style="margin-top:14px; width:70%">
+            <div class="p"></div><div class="p" style="width:84%"></div>
+          </div>
+
+          <span class="label inner">③ 输入器：聚焦发光，Enter 直达</span><br/>
+          <div class="composer" style="margin-top:26px">
+            <b style="color:var(--ink-2)">#</b>
+            <span class="pill">给你的房间起个名字…</span>
+            <span class="dice">🎲</span>
+            <span class="btn-a">进入房间 →</span>
+          </div>
+          <div class="p" style="width:46%; margin-top:10px"></div>
+
+          <span class="label inner">④ 热门场景 chips（横滚）</span><br/>
+          <div class="row" style="margin-top:26px; flex-wrap:nowrap;">
+            <span style="font-size:10px;color:var(--ink-2)">热门场景</span>
+            <span class="chip" style="height:22px;padding:0 10px;font-size:10px">今晚开黑</span>
+            <span class="chip" style="height:22px;padding:0 10px;font-size:10px">晨会速记</span>
+            <span class="chip" style="height:22px;padding:0 10px;font-size:10px">灵感随聊</span>
+            <span class="chip" style="height:22px;padding:0 10px;font-size:10px">深夜电台 ●</span>
+          </div>
+        </div>
+
+        <div class="marquee wx">
+          <span class="label left">⑤ 场景跑马灯：匀速循环 / hover 暂停 / 两端渐隐</span>
+          <div class="mtrack">
+            <span><i></i>游戏开黑</span><span><i></i>远程晨会</span><span><i></i>深夜电台</span><span><i></i>读书会</span>
+            <span><i></i>模拟面试</span><span><i></i>双语陪练</span><span><i></i>云自习</span>
+          </div>
+        </div>
+
+        <div class="sec wx" style="padding-block:14px">
+          <span class="label left">⑥ 数据行：tabular 数字 + 分隔线</span>
+          <div class="stats">
+            <div class="stat"><div class="n">0</div><div class="t">需要注册的账号</div></div>
+            <div class="stat"><div class="n">1</div><div class="t">一条链接进房</div></div>
+            <div class="stat"><div class="n">2</div><div class="t">PC / 手机双端</div></div>
+            <div class="stat"><div class="n">∞</div><div class="t">可能的对话</div></div>
+          </div>
+        </div>
+
+        <div class="sec wx">
+          <span class="label left">⑦ Bento ×3：hover 抬升 + 图标发光</span>
+          <div class="bento" style="margin-top:24px">
+            <div class="bcard"><div class="ic"></div><div class="t h-block"></div><div class="d p"></div><div class="d p" style="width:70%"></div><div class="viz"></div><span style="position:absolute;top:-9px;right:8px;font-size:9px;color:var(--note)">链接即房间</span></div>
+            <div class="bcard"><div class="ic"></div><div class="t h-block"></div><div class="d p"></div><div class="d p" style="width:70%"></div><div class="viz"></div><span style="position:absolute;top:-9px;right:8px;font-size:9px;color:var(--note)">双端手感</span></div>
+            <div class="bcard"><div class="ic"></div><div class="t h-block"></div><div class="d p"></div><div class="d p" style="width:70%"></div><div class="viz"></div><span style="position:absolute;top:-9px;right:8px;font-size:9px;color:var(--note)">低延迟引擎</span></div>
+          </div>
+        </div>
+
+        <div class="sec wx">
+          <span class="label left">⑧ 最近加入（仅有记录时出现）</span>
+          <div class="rlist" style="margin-top:22px; max-width:70%">
+            <div class="ritem"><span class="avatar"></span><span class="grow"><div class="p" style="width:40%"></div></span><span class="act"><i>✕</i><i style="background:var(--brand);color:#fff;border-color:var(--brand)">→</i></span></div>
+            <div class="ritem"><span class="avatar"></span><span class="grow"><div class="p" style="width:34%"></div></span><span class="act"><i>✕</i><i style="background:var(--brand);color:#fff;border-color:var(--brand)">→</i></span></div>
+          </div>
+        </div>
+
+        <div class="foot">自研 Rust WebRTC · 音频不落盘 · Built with ♥</div>
+      </div>
+    </div>
+
+    <!-- ============ 移动首页 ============ -->
+    <div class="board mobile">
+      <div class="board-title"><b>B2 · 首页 / 移动</b><span>340 × 自动</span></div>
+      <div class="wx">
+        <div class="bar" style="padding:0 12px">
+          <div class="row"><span class="chip" style="width:22px"></span><b style="font-size:11px">O-Meeting</b></div>
+          <span class="chip" style="height:16px; width:64px"></span>
+        </div>
+
+        <div class="sec">
+          <div class="stack-6">
+            <div class="h-block" style="height:26px; width:96%"></div>
+            <div class="h-block" style="height:26px; width:88%"></div>
+            <div class="h-block" style="height:26px; width:56%; background:linear-gradient(90deg,#c9befa,#b8cdf6)"></div>
+          </div>
+          <span class="label inner">标题折成 3 行，字号 clamp 缩放</span>
+
+          <div class="stack-6" style="margin-top:14px">
+            <div class="p"></div><div class="p"></div><div class="p" style="width:60%"></div>
+          </div>
+
+          <span class="label inner">输入器：移动端纵向堆叠</span>
+          <div class="stack-10" style="margin-top:24px">
+            <div class="composer"><b style="color:var(--ink-2)">#</b><span class="pill">房间名…</span><span class="dice">🎲</span></div>
+            <div class="btn-a" style="text-align:center; padding:12px">进入房间 →（全宽）</div>
+          </div>
+
+          <div class="row" style="margin-top:16px; overflow:hidden">
+            <span class="chip" style="height:22px;padding:0 10px;font-size:10px;flex-shrink:0">今晚开黑</span>
+            <span class="chip" style="height:22px;padding:0 10px;font-size:10px;flex-shrink:0">晨会速记</span>
+            <span class="chip" style="height:22px;padding:0 10px;font-size:10px;flex-shrink:0">→ 横滚</span>
+          </div>
+        </div>
+
+        <div class="marquee"><div class="mtrack"><span><i></i>游戏开黑</span><span><i></i>远程晨会</span><span><i></i>深夜电台</span><span><i></i>读书会</span></div></div>
+
+        <div class="sec wx" style="padding-block:12px">
+          <span class="label left">数据 2×2</span>
+          <div class="stats" style="flex-wrap:wrap">
+            <div class="stat" style="flex:1 1 45%"><div class="n">0</div><div class="t">需要注册的账号</div></div>
+            <div class="stat" style="flex:1 1 45%"><div class="n">1</div><div class="t">一条链接进房</div></div>
+            <div class="stat" style="flex:1 1 45%; border-left:0"><div class="n">2</div><div class="t">双端支持</div></div>
+            <div class="stat" style="flex:1 1 45%; border-left:0"><div class="n">∞</div><div class="t">可能的对话</div></div>
+          </div>
+        </div>
+
+        <div class="sec wx">
+          <span class="label left">Bento 竖排单列</span>
+          <div class="bento" style="grid-template-columns:1fr; margin-top:22px">
+            <div class="bcard"><div class="ic"></div><div class="t h-block"></div><div class="d p"></div><div class="viz"></div></div>
+            <div class="bcard"><div class="ic"></div><div class="t h-block"></div><div class="d p"></div><div class="viz"></div></div>
+          </div>
+        </div>
+
+        <div class="sec wx">
+          <span class="label top">最近加入：全宽大卡片，触控 ≥40px</span>
+          <div class="rlist" style="margin-top:22px">
+            <div class="ritem"><span class="avatar"></span><span class="grow"><div class="p" style="width:52%"></div></span><span class="act"><i>✕</i><i style="background:var(--brand);color:#fff;border-color:var(--brand)">→</i></span></div>
+          </div>
+        </div>
+
+        <div class="foot">点击即走 · Built with ♥</div>
+      </div>
+    </div>
+
+    <!-- ============ 房间页 PC ============ -->
+    <div class="board pc">
+      <div class="board-title"><b>B3 · 房间页 / PC（下一步）</b><span>760 × 自动</span></div>
+      <div class="wx">
+        <div class="bar">
+          <div class="row"><span class="chip" style="width:26px"></span><b style="font-size:12px">O-Meeting</b></div>
+          <div class="row" style="font-size:11px;color:var(--ink-2)"><span class="dot"></span>已就位 · 2 人在房</div>
+        </div>
+
+        <div class="sec wx">
+          <div class="row" style="justify-content:space-between">
+            <div class="row">
+              <span class="chip" style="height:24px;padding:0 12px;font-size:11px;font-weight:700">#今晚开黑</span>
+            </div>
+            <div class="row">
+              <span class="chip" style="height:24px;padding:0 12px;font-size:10px">复制链接</span>
+              <span class="chip" style="height:24px;padding:0 12px;font-size:10px">全员静音</span>
+            </div>
+          </div>
+
+          <span class="label left">参与者网格 4 列；说话者卡片高亮描边</span>
+          <div class="grid6" style="margin-top:20px">
+            <div class="pcard big"><span class="avatar"></span><div class="nm h-block"></div><div class="wv"></div><span style="position:absolute;top:-9px;left:8px;font-size:9px;color:var(--note)">正在说话</span></div>
+            <div class="pcard"><span class="avatar"></span><div class="nm h-block"></div><div class="wv" style="opacity:.4"></div></div>
+            <div class="pcard"><span class="avatar"></span><div class="nm h-block"></div><div class="wv" style="opacity:.4"></div></div>
+            <div class="pcard"><span class="avatar"></span><div class="nm h-block"></div><div class="wv" style="opacity:0"></div><span style="position:absolute;top:34px;right:8px;font-size:9px;color:var(--ink-2)">🔇</span></div>
+          </div>
+
+          <span class="label top">空房时：提示条「你是一个人 + 复制链接」</span>
+          <div class="fab">🎙️<span class="label left">右下 FAB：全场静音开关</span></div>
+
+          <!-- 昵称弹窗 -->
+          <div class="dialog">
+            <b style="font-size:12px">加入房间前，起个名字</b>
+            <div class="in"># <span>输入昵称…</span> <span style="margin-left:auto">🎲</span></div>
+            <div style="display:flex;gap:8px">
+              <span class="btn-a" style="flex:1;text-align:center;padding:9px 0">进入</span>
+            </div>
+            <span class="label" style="right:-10px;bottom:-8px;transform:none">仅首次；每个房间记忆昵称（localStorage）</span>
+          </div>
+        </div>
+
+        <div class="foot">断线自动重连 · subscribe 轮询 · WebRTC(relay)</div>
+      </div>
+    </div>
+  </div>
+
+  <p style="color:var(--ink-2);font-size:12px;max-width:720px;text-align:center;line-height:1.7">
+    交互注记：③ 聚焦光晕 + 输入波形加速；⑤ hover 暂停；⑦ 卡片 hover 抬升；昵称弹窗每个房间记忆；FAB 一键全场静音。<br/>
+    断点：≥621px 桌面布局；≤620px 竖排 + 单列。
+  </p>
+</body>
+</html>

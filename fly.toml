@@ -1,0 +1,47 @@
+# Fly.io 部署配置：https://fly.io/docs/languages-and-frameworks/dockerfile/
+#
+# 前置：安装 flyctl（brew install flyctl）→ fly auth login → fly launch（选区域 hkg/sin/nrt）
+#
+# app 名确定后自动获得 https://<app-name>.fly.dev —— Fly 托管受信任证书，手机麦克风可直接用
+# 注意把下里的 app 名和 PUBLIC_IP 换成实际值（flyctl deploy 时会用环境变量）
+
+app = "omeeting"
+primary_region = "hkg"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  RUST_LOG = "omeeting_server=info,str0m=info"
+  # Fly 任意播 IP：ICE 候选直接宣告公网可达地址（deploy 后填实际 IP）
+  PUBLIC_IP = "0.0.0.0"
+
+[http_service]
+  internal_port = 7070
+  force_https = true
+  auto_stop_machines = false   # SFU 必须常驻，不能自动休眠
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+
+[[services.ports]]
+  port = 443
+  handlers = ["tls", "http"]
+
+[[services.ports]]
+  port = 80
+  handlers = ["http"]
+
+# WebRTC 媒体：UDP 7071 直通到容器
+[[services]]
+  protocol = "udp"
+  internal_port = 7071
+
+  [[services.ports]]
+    port = 7071
+
+[vm]
+  size = "shared-cpu-1x"
+  memory = "512mb"

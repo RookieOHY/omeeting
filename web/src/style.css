@@ -1,0 +1,204 @@
+/* ============================================================
+   O-Meeting Design System v3 —— 原创：晨白蓝调（腾讯会议式）
+   白色画布 + 蓝色主色 + 深蓝墨字；LED 电平条保留深色硬件槽
+   ============================================================ */
+
+:root {
+  /* 底色：淡蓝灰画布，卡片纯白 */
+  --bg: #f3f6fa;
+  --surface: #ffffff;
+  --surface-strong: #edf2f9;
+  --border: rgba(23, 50, 93, 0.1);
+  --border-hover: rgba(23, 50, 93, 0.22);
+
+  --text: #1c2b45;
+  --text-2: #5a6a85;
+  --text-3: #93a0b8;
+
+  /* 品牌色：会议蓝为主，绿做成功/在线，红做挂断 */
+  --blue: #1f6bff;
+  --iris: #6fa4ff;
+  --aqua: #0ca678; /* 历史变量名：现在承担「成功绿」语义 */
+  --brand-grad: linear-gradient(135deg, #3f8cff 0%, #1f6bff 100%);
+  --danger: #e5484d;
+  --ok: #0ca678;
+
+  /* 形状与阴影 */
+  --r-lg: 24px;
+  --r-md: 16px;
+  --r-sm: 10px;
+  --shadow-soft: 0 10px 30px rgba(23, 50, 93, 0.1);
+  --shadow-glow: 0 6px 24px rgba(31, 107, 255, 0.22);
+
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    'Segoe UI',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+/* ---------- 氛围背景：极淡的两团蓝，白底不抢戏 ---------- */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(44rem 30rem at 10% -8%, rgba(31, 107, 255, 0.07), transparent 60%),
+    radial-gradient(40rem 30rem at 94% 0%, rgba(111, 164, 255, 0.08), transparent 62%),
+    radial-gradient(36rem 26rem at 72% 96%, rgba(12, 166, 120, 0.04), transparent 65%);
+}
+
+.backdrop::after {
+  /* 极淡噪点，解决大面积渐变的断层感 */
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+}
+
+/* ---------- 通用 ---------- */
+input,
+button {
+  font-family: inherit;
+}
+
+.page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: clamp(20px, 4vw, 44px) clamp(16px, 4vw, 32px) 72px;
+}
+
+/* 品牌头 */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  user-select: none;
+}
+
+.brand .name {
+  font-weight: 750;
+  font-size: 16.5px;
+  letter-spacing: 0.01em;
+}
+
+.badge-soft {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 8px rgba(12, 166, 120, 0.6);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* 常用文字 */
+.lead {
+  color: var(--text-2);
+  line-height: 1.75;
+}
+
+.text-3 {
+  color: var(--text-3);
+}
+
+/* 渐变文字 */
+.grad-text {
+  background: var(--brand-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* 键位提示 */
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  color: var(--text-2);
+  font-size: 11px;
+  font-family: inherit;
+}
+
+/* 入场动效 */
+.rise {
+  opacity: 0;
+  animation: rise 0.7s var(--ease-out) forwards;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 尊重系统降级 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
